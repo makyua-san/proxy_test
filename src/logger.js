@@ -3,7 +3,11 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const crypto = require('crypto');
 
-const LOG_PATH = path.join(__dirname, '..', 'data', 'logs.jsonl');
+const DATA_DIR = path.join(__dirname, '..', 'data');
+const LOG_PATH = path.join(DATA_DIR, 'logs.jsonl');
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+
 const emitter = new EventEmitter();
 
 function createEntry({ method, host, port, sourceIp, status, matchedRule }) {
