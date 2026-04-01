@@ -1,0 +1,12 @@
+{
+  "name": "proxy-test-tool",
+  "version": "1.0.0",
+  "description": "ホワイトリスト検証用プロキシテストツール",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}

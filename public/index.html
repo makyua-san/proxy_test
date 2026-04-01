@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Proxy Monitor</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Proxy Monitor</h1>
+    <div class="connection-status" id="connStatus">Connecting...</div>
+  </header>
+
+  <main>
+    <aside class="whitelist-panel">
+      <h2>Whitelist</h2>
+      <form id="addForm" class="add-form">
+        <input type="text" id="domainInput" placeholder="example.com or *.example.com" required>
+        <button type="submit">Add</button>
+      </form>
+      <ul id="whitelistItems"></ul>
+    </aside>
+
+    <section class="log-panel">
+      <div class="log-toolbar">
+        <h2>Request Log</h2>
+        <div class="log-actions">
+          <label><input type="checkbox" id="autoScroll" checked> Auto-scroll</label>
+          <button id="clearLog">Clear Log</button>
+        </div>
+      </div>
+      <div class="log-container" id="logContainer">
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Method</th>
+              <th>Host</th>
+              <th>Port</th>
+              <th>Status</th>
+              <th>Matched Rule</th>
+            </tr>
+          </thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <footer id="statsBar">
+    Total: <span id="statTotal">0</span> |
+    Allowed: <span id="statAllowed">0</span> |
+    Blocked: <span id="statBlocked">0</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
