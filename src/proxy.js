@@ -1,18 +1,52 @@
 const http = require('http');
 const net = require('net');
-const url = require('url');
 const whitelist = require('./whitelist');
 const logger = require('./logger');
+
+const BYPASS_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
+
+function isLocalhost(hostname) {
+  return BYPASS_HOSTS.has(hostname);
+}
 
 function createProxyServer() {
   const server = http.createServer();
 
   // HTTP forward proxy (plain HTTP requests)
   server.on('request', (clientReq, clientRes) => {
-    const parsed = url.parse(clientReq.url);
+    let parsed;
+    try {
+      parsed = new URL(clientReq.url);
+    } catch {
+      clientRes.writeHead(400, { 'Content-Type': 'text/plain' });
+      clientRes.end('Bad Request');
+      return;
+    }
+
     const hostname = (parsed.hostname || '').toLowerCase();
     const port = parseInt(parsed.port, 10) || 80;
     const sourceIp = clientReq.socket.remoteAddress || '127.0.0.1';
+
+    // Bypass localhost traffic (UI server etc.)
+    if (isLocalhost(hostname)) {
+      const options = {
+        hostname,
+        port,
+        path: parsed.pathname + parsed.search,
+        method: clientReq.method,
+        headers: clientReq.headers
+      };
+      const proxyReq = http.request(options, (proxyRes) => {
+        clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(clientRes, { end: true });
+      });
+      proxyReq.on('error', (err) => {
+        clientRes.writeHead(502, { 'Content-Type': 'text/plain' });
+        clientRes.end(`Proxy error: ${err.message}`);
+      });
+      clientReq.pipe(proxyReq, { end: true });
+      return;
+    }
 
     const matchedRule = whitelist.isWhitelisted(hostname);
 
@@ -38,7 +72,7 @@ function createProxyServer() {
     const options = {
       hostname: parsed.hostname,
       port,
-      path: parsed.path,
+      path: parsed.pathname + parsed.search,
       method: clientReq.method,
       headers: clientReq.headers
     };
@@ -62,6 +96,22 @@ function createProxyServer() {
     const host = hostname.toLowerCase();
     const port = parseInt(portStr, 10) || 443;
     const sourceIp = clientSocket.remoteAddress || '127.0.0.1';
+
+    // Bypass localhost traffic
+    if (isLocalhost(host)) {
+      const serverSocket = net.connect(port, host, () => {
+        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+        serverSocket.write(head);
+        serverSocket.pipe(clientSocket);
+        clientSocket.pipe(serverSocket);
+      });
+      serverSocket.on('error', () => {
+        clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
+        clientSocket.end();
+      });
+      clientSocket.on('error', () => serverSocket.destroy());
+      return;
+    }
 
     const matchedRule = whitelist.isWhitelisted(host);
 
@@ -88,7 +138,7 @@ function createProxyServer() {
       clientSocket.pipe(serverSocket);
     });
 
-    serverSocket.on('error', (err) => {
+    serverSocket.on('error', () => {
       clientSocket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
       clientSocket.end();
     });

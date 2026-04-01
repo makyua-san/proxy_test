@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const url = require('url');
 const whitelist = require('./whitelist');
 const logger = require('./logger');
 
@@ -16,7 +15,7 @@ const MIME_TYPES = {
 };
 
 function handleRequest(req, res) {
-  const parsed = url.parse(req.url, true);
+  const parsed = new URL(req.url, `http://${req.headers.host}`);
   const pathname = parsed.pathname;
 
   // CORS headers
@@ -32,8 +31,8 @@ function handleRequest(req, res) {
 
   // API routes
   if (pathname === '/api/logs' && req.method === 'GET') {
-    const limit = parseInt(parsed.query.limit, 10) || 100;
-    const offset = parseInt(parsed.query.offset, 10) || 0;
+    const limit = parseInt(parsed.searchParams.get('limit'), 10) || 100;
+    const offset = parseInt(parsed.searchParams.get('offset'), 10) || 0;
     const result = logger.readLogs(limit, offset);
     jsonResponse(res, 200, result);
     return;
