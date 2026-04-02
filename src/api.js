@@ -38,6 +38,21 @@ function handleRequest(req, res) {
     return;
   }
 
+  if (pathname === '/api/logs/detail' && req.method === 'GET') {
+    const id = parsed.searchParams.get('id');
+    if (!id) {
+      jsonResponse(res, 400, { error: 'id is required' });
+      return;
+    }
+    const detail = logger.getDetail(id);
+    if (!detail) {
+      jsonResponse(res, 404, { error: 'Detail not found' });
+      return;
+    }
+    jsonResponse(res, 200, detail);
+    return;
+  }
+
   if (pathname === '/api/logs/clear' && req.method === 'POST') {
     logger.clear();
     jsonResponse(res, 200, { ok: true });

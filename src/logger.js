@@ -5,8 +5,10 @@ const crypto = require('crypto');
 
 const DATA_DIR = path.join(__dirname, '..', 'data');
 const LOG_PATH = path.join(DATA_DIR, 'logs.jsonl');
+const DETAILS_DIR = path.join(DATA_DIR, 'details');
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(DETAILS_DIR, { recursive: true });
 
 const emitter = new EventEmitter();
 
@@ -35,6 +37,23 @@ function log(params) {
   return entry;
 }
 
+function saveDetail(id, detail) {
+  if (!/^[a-f0-9]+$/.test(id)) return;
+  const filePath = path.join(DETAILS_DIR, `${id}.json`);
+  fs.writeFileSync(filePath, JSON.stringify(detail, null, 2), 'utf8');
+}
+
+function getDetail(id) {
+  if (!/^[a-f0-9]+$/.test(id)) return null;
+  const filePath = path.join(DETAILS_DIR, `${id}.json`);
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 function readLogs(limit = 100, offset = 0) {
   try {
     const raw = fs.readFileSync(LOG_PATH, 'utf8');
@@ -52,6 +71,13 @@ function readLogs(limit = 100, offset = 0) {
 
 function clear() {
   fs.writeFileSync(LOG_PATH, '', 'utf8');
+  // Clear details directory
+  try {
+    const files = fs.readdirSync(DETAILS_DIR);
+    for (const file of files) {
+      fs.unlinkSync(path.join(DETAILS_DIR, file));
+    }
+  } catch { /* ignore */ }
 }
 
-module.exports = { log, readLogs, clear, emitter };
+module.exports = { log, saveDetail, getDetail, readLogs, clear, emitter };
