@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const whitelist = require('./whitelist');
+const monitorlist = require('./monitorlist');
 const logger = require('./logger');
 
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
@@ -90,6 +91,45 @@ function handleRequest(req, res) {
           return;
         }
         const domains = whitelist.remove(domain);
+        jsonResponse(res, 200, { ok: true, domains });
+      } catch {
+        jsonResponse(res, 400, { error: 'Invalid JSON' });
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/monitorlist' && req.method === 'GET') {
+    jsonResponse(res, 200, { domains: monitorlist.list() });
+    return;
+  }
+
+  if (pathname === '/api/monitorlist' && req.method === 'POST') {
+    readBody(req, (body) => {
+      try {
+        const { domain } = JSON.parse(body);
+        if (!domain) {
+          jsonResponse(res, 400, { error: 'domain is required' });
+          return;
+        }
+        const domains = monitorlist.add(domain);
+        jsonResponse(res, 200, { ok: true, domains });
+      } catch {
+        jsonResponse(res, 400, { error: 'Invalid JSON' });
+      }
+    });
+    return;
+  }
+
+  if (pathname === '/api/monitorlist' && req.method === 'DELETE') {
+    readBody(req, (body) => {
+      try {
+        const { domain } = JSON.parse(body);
+        if (!domain) {
+          jsonResponse(res, 400, { error: 'domain is required' });
+          return;
+        }
+        const domains = monitorlist.remove(domain);
         jsonResponse(res, 200, { ok: true, domains });
       } catch {
         jsonResponse(res, 400, { error: 'Invalid JSON' });

@@ -1,6 +1,7 @@
 const http = require('http');
 const net = require('net');
 const whitelist = require('./whitelist');
+const monitorlist = require('./monitorlist');
 const logger = require('./logger');
 
 const BYPASS_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
@@ -93,13 +94,16 @@ function createProxyServer() {
     }
 
     const matchedRule = whitelist.isWhitelisted(hostname);
+    const monitoredRule = monitorlist.isMonitored(hostname);
     const entry = logger.log({
       method: clientReq.method,
       host: hostname,
       port,
       sourceIp,
       status: matchedRule ? 'allowed' : 'blocked',
-      matchedRule
+      matchedRule,
+      monitored: !!monitoredRule,
+      monitoredRule
     });
 
     // Collect request body for detail capture
@@ -221,13 +225,16 @@ function createProxyServer() {
     }
 
     const matchedRule = whitelist.isWhitelisted(host);
+    const monitoredRule = monitorlist.isMonitored(host);
     const entry = logger.log({
       method: 'CONNECT',
       host,
       port,
       sourceIp,
       status: matchedRule ? 'allowed' : 'blocked',
-      matchedRule
+      matchedRule,
+      monitored: !!monitoredRule,
+      monitoredRule
     });
 
     // Save CONNECT detail (no content visible)

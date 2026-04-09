@@ -9,11 +9,16 @@ const connStatus = document.getElementById('connStatus');
 const statTotal = document.getElementById('statTotal');
 const statAllowed = document.getElementById('statAllowed');
 const statBlocked = document.getElementById('statBlocked');
+const statMonitored = document.getElementById('statMonitored');
 const detailPanel = document.getElementById('detailPanel');
 const detailContent = document.getElementById('detailContent');
 const closeDetailBtn = document.getElementById('closeDetail');
+const monitorListItems = document.getElementById('monitorListItems');
+const monitorAddForm = document.getElementById('monitorAddForm');
+const monitorDomainInput = document.getElementById('monitorDomainInput');
+const filterMonitored = document.getElementById('filterMonitored');
 
-let stats = { total: 0, allowed: 0, blocked: 0 };
+let stats = { total: 0, allowed: 0, blocked: 0, monitored: 0 };
 let selectedRow = null;
 
 // --- Whitelist ---
@@ -66,10 +71,12 @@ async function removeDomain(domain) {
 function addLogRow(entry) {
   const tr = document.createElement('tr');
   tr.className = entry.status;
+  if (entry.monitored) tr.classList.add('monitored');
   tr.dataset.logId = entry.id;
   const time = new Date(entry.timestamp).toLocaleTimeString();
   tr.innerHTML = `
     <td>${time}</td>
+    <td class="monitor-badge">${entry.monitored ? '&#9679;' : ''}</td>
     <td>${escapeHtml(entry.method)}</td>
     <td>${escapeHtml(entry.host)}</td>
     <td>${entry.port}</td>
@@ -83,7 +90,12 @@ function addLogRow(entry) {
   stats.total++;
   if (entry.status === 'allowed') stats.allowed++;
   else stats.blocked++;
+  if (entry.monitored) stats.monitored++;
   updateStats();
+
+  if (filterMonitored.checked && !entry.monitored) {
+    tr.style.display = 'none';
+  }
 
   if (autoScrollCheckbox.checked) {
     logContainer.scrollTop = logContainer.scrollHeight;
@@ -94,6 +106,7 @@ function updateStats() {
   statTotal.textContent = stats.total;
   statAllowed.textContent = stats.allowed;
   statBlocked.textContent = stats.blocked;
+  statMonitored.textContent = stats.monitored;
 }
 
 async function loadInitialLogs() {
@@ -106,7 +119,7 @@ async function loadInitialLogs() {
 clearLogBtn.addEventListener('click', async () => {
   await fetch('/api/logs/clear', { method: 'POST' });
   logBody.innerHTML = '';
-  stats = { total: 0, allowed: 0, blocked: 0 };
+  stats = { total: 0, allowed: 0, blocked: 0, monitored: 0 };
   updateStats();
   closeDetail();
 });
@@ -224,6 +237,64 @@ function closeDetail() {
 
 closeDetailBtn.addEventListener('click', closeDetail);
 
+// --- Monitor List ---
+async function loadMonitorList() {
+  const res = await fetch('/api/monitorlist');
+  const data = await res.json();
+  renderMonitorList(data.domains);
+}
+
+function renderMonitorList(domains) {
+  monitorListItems.innerHTML = '';
+  domains.forEach(domain => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${escapeHtml(domain)}</span><button class="remove-btn" title="Remove">&times;</button>`;
+    li.querySelector('.remove-btn').addEventListener('click', () => removeMonitorDomain(domain));
+    monitorListItems.appendChild(li);
+  });
+}
+
+monitorAddForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const domain = monitorDomainInput.value.trim();
+  if (!domain) return;
+
+  const res = await fetch('/api/monitorlist', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    renderMonitorList(data.domains);
+    monitorDomainInput.value = '';
+  }
+});
+
+async function removeMonitorDomain(domain) {
+  const res = await fetch('/api/monitorlist', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ domain })
+  });
+  const data = await res.json();
+  if (data.ok) {
+    renderMonitorList(data.domains);
+  }
+}
+
+// --- Monitor Filter ---
+filterMonitored.addEventListener('change', () => {
+  const rows = logBody.querySelectorAll('tr');
+  rows.forEach(row => {
+    if (filterMonitored.checked && !row.classList.contains('monitored')) {
+      row.style.display = 'none';
+    } else {
+      row.style.display = '';
+    }
+  });
+});
+
 // --- WebSocket ---
 function connectWebSocket() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -259,5 +330,6 @@ function escapeHtml(str) {
 
 // --- Init ---
 loadWhitelist();
+loadMonitorList();
 loadInitialLogs();
 connectWebSocket();

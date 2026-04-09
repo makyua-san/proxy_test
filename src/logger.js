@@ -12,7 +12,7 @@ fs.mkdirSync(DETAILS_DIR, { recursive: true });
 
 const emitter = new EventEmitter();
 
-function createEntry({ method, host, port, sourceIp, status, matchedRule }) {
+function createEntry({ method, host, port, sourceIp, status, matchedRule, monitored, monitoredRule }) {
   return {
     id: crypto.randomBytes(4).toString('hex'),
     timestamp: new Date().toISOString(),
@@ -21,7 +21,9 @@ function createEntry({ method, host, port, sourceIp, status, matchedRule }) {
     port: port || 0,
     sourceIp: sourceIp || '127.0.0.1',
     status,
-    matchedRule: matchedRule || null
+    matchedRule: matchedRule || null,
+    monitored: !!monitored,
+    monitoredRule: monitoredRule || null
   };
 }
 
