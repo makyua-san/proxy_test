@@ -58,6 +58,15 @@ function collectBody(stream, limit, callback) {
 }
 
 // --- MITM HTTP server for decrypting monitored HTTPS traffic ---
+// Collects the full body as a Buffer for forwarding, and a truncated string for logging.
+function collectFullBody(stream, callback) {
+  const chunks = [];
+  let size = 0;
+  stream.on('data', (chunk) => { chunks.push(chunk); size += chunk.length; });
+  stream.on('end', () => callback(Buffer.concat(chunks), size));
+  stream.on('error', () => callback(Buffer.alloc(0), 0));
+}
+
 const mitmHttpServer = http.createServer((clientReq, clientRes) => {
   const meta = clientReq.socket._mitmMeta;
   if (!meta) {
@@ -69,7 +78,11 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
   const { host, port, sourceIp, matchedRule, monitoredRule } = meta;
   const fullUrl = `https://${host}${clientReq.url}`;
 
-  collectBody(clientReq, REQ_BODY_LIMIT, (reqBody, reqTruncated, reqTotalSize) => {
+  // Collect FULL request body for forwarding; log only first N bytes
+  collectFullBody(clientReq, (fullReqBuf, reqSize) => {
+    const logReqBody = reqSize > 0 ? fullReqBuf.slice(0, REQ_BODY_LIMIT).toString('utf8') : null;
+    const reqTruncated = reqSize > REQ_BODY_LIMIT;
+
     const entry = logger.log({
       method: clientReq.method,
       host,
@@ -89,9 +102,9 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
         url: fullUrl,
         httpVersion: clientReq.httpVersion,
         headers: clientReq.headers,
-        body: reqBody || null,
+        body: logReqBody,
         bodyTruncated: reqTruncated,
-        bodyTotalSize: reqTotalSize
+        bodyTotalSize: reqSize
       },
       response: null
     };
@@ -110,27 +123,31 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
       const resContentType = proxyRes.headers['content-type'] || '';
       const captureBody = isTextMime(resContentType);
 
-      // Build response headers without framing headers (let Node.js set them correctly)
-      const fwdResHeaders = { ...proxyRes.headers };
-      delete fwdResHeaders['content-length'];
-      delete fwdResHeaders['transfer-encoding'];
-
       if (captureBody) {
-        collectBody(proxyRes, RES_BODY_LIMIT, (resBody, resTruncated, resTotalSize) => {
+        // Collect FULL response body for forwarding; log only first N bytes
+        collectFullBody(proxyRes, (fullResBuf, resSize) => {
+          const logResBody = fullResBuf.slice(0, RES_BODY_LIMIT).toString('utf8');
+          const resTruncated = resSize > RES_BODY_LIMIT;
+
           detail.response = {
             statusCode: proxyRes.statusCode,
             statusMessage: proxyRes.statusMessage,
             headers: proxyRes.headers,
-            body: resBody,
+            body: logResBody,
             bodyTruncated: resTruncated,
-            bodyTotalSize: resTotalSize
+            bodyTotalSize: resSize
           };
           logger.saveDetail(entry.id, detail);
 
+          // Forward FULL response body, let Node.js set correct framing headers
+          const fwdResHeaders = { ...proxyRes.headers };
+          delete fwdResHeaders['content-length'];
+          delete fwdResHeaders['transfer-encoding'];
           clientRes.writeHead(proxyRes.statusCode, fwdResHeaders);
-          clientRes.end(resBody);
+          clientRes.end(fullResBuf);
         });
       } else {
+        // Binary: pipe directly (no body capture)
         const contentLength = parseInt(proxyRes.headers['content-length'], 10) || 0;
         detail.response = {
           statusCode: proxyRes.statusCode,
@@ -157,8 +174,8 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
       clientRes.end(`Proxy error: ${err.message}`);
     });
 
-    if (reqBody) proxyReq.end(reqBody);
-    else proxyReq.end();
+    // Forward FULL request body to upstream
+    proxyReq.end(fullReqBuf);
   });
 });
 mitmHttpServer.timeout = 0;
