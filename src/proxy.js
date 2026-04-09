@@ -110,6 +110,11 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
       const resContentType = proxyRes.headers['content-type'] || '';
       const captureBody = isTextMime(resContentType);
 
+      // Build response headers without framing headers (let Node.js set them correctly)
+      const fwdResHeaders = { ...proxyRes.headers };
+      delete fwdResHeaders['content-length'];
+      delete fwdResHeaders['transfer-encoding'];
+
       if (captureBody) {
         collectBody(proxyRes, RES_BODY_LIMIT, (resBody, resTruncated, resTotalSize) => {
           detail.response = {
@@ -122,7 +127,7 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
           };
           logger.saveDetail(entry.id, detail);
 
-          clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+          clientRes.writeHead(proxyRes.statusCode, fwdResHeaders);
           clientRes.end(resBody);
         });
       } else {
@@ -143,9 +148,12 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
     });
 
     proxyReq.on('error', (err) => {
+      console.error(`[MITM] Upstream error for ${host}${clientReq.url}: ${err.message}`);
       detail.response = { statusCode: 502, statusMessage: err.message, headers: {}, body: null };
       logger.saveDetail(entry.id, detail);
-      clientRes.writeHead(502, { 'Content-Type': 'text/plain' });
+      if (!clientRes.headersSent) {
+        clientRes.writeHead(502, { 'Content-Type': 'text/plain' });
+      }
       clientRes.end(`Proxy error: ${err.message}`);
     });
 
@@ -156,25 +164,35 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
 mitmHttpServer.timeout = 0;
 
 function handleMitm(clientSocket, head, host, port, sourceIp, matchedRule, monitoredRule) {
-  const hostCert = certs.getHostCert(host);
+  try {
+    const hostCert = certs.getHostCert(host);
 
-  if (head && head.length > 0) {
-    clientSocket.unshift(head);
+    if (head && head.length > 0) {
+      clientSocket.unshift(head);
+    }
+
+    const tlsSocket = new tls.TLSSocket(clientSocket, {
+      isServer: true,
+      key: hostCert.key,
+      cert: hostCert.cert,
+      ALPNProtocols: ['http/1.1']
+    });
+
+    tlsSocket.on('error', (err) => {
+      console.error(`[MITM] TLS error for ${host}: ${err.message}`);
+      tlsSocket.destroy();
+    });
+
+    clientSocket.on('error', (err) => {
+      console.error(`[MITM] Socket error for ${host}: ${err.message}`);
+    });
+
+    tlsSocket._mitmMeta = { host, port, sourceIp, matchedRule, monitoredRule };
+    mitmHttpServer.emit('connection', tlsSocket);
+  } catch (err) {
+    console.error(`[MITM] Failed to setup for ${host}: ${err.message}`);
+    clientSocket.destroy();
   }
-
-  const tlsSocket = new tls.TLSSocket(clientSocket, {
-    isServer: true,
-    key: hostCert.key,
-    cert: hostCert.cert,
-    ALPNProtocols: ['http/1.1']
-  });
-
-  tlsSocket.on('error', () => {
-    tlsSocket.destroy();
-  });
-
-  tlsSocket._mitmMeta = { host, port, sourceIp, matchedRule, monitoredRule };
-  mitmHttpServer.emit('connection', tlsSocket);
 }
 
 function createProxyServer() {
@@ -383,8 +401,9 @@ function createProxyServer() {
 
     // MITM for monitored domains - decrypt and log individual requests
     if (monitoredRule) {
-      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      handleMitm(clientSocket, head, host, port, sourceIp, matchedRule, monitoredRule);
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n', () => {
+        handleMitm(clientSocket, head, host, port, sourceIp, matchedRule, monitoredRule);
+      });
       return;
     }
 
