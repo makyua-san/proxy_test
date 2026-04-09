@@ -5,6 +5,7 @@ const addForm = document.getElementById('addForm');
 const domainInput = document.getElementById('domainInput');
 const autoScrollCheckbox = document.getElementById('autoScroll');
 const clearLogBtn = document.getElementById('clearLog');
+const exportLogBtn = document.getElementById('exportLog');
 const connStatus = document.getElementById('connStatus');
 const statTotal = document.getElementById('statTotal');
 const statAllowed = document.getElementById('statAllowed');
@@ -122,6 +123,39 @@ clearLogBtn.addEventListener('click', async () => {
   stats = { total: 0, allowed: 0, blocked: 0, monitored: 0 };
   updateStats();
   closeDetail();
+});
+
+exportLogBtn.addEventListener('click', async () => {
+  const visibleRows = logBody.querySelectorAll('tr:not([style*="display: none"])');
+  const ids = Array.from(visibleRows).map(r => r.dataset.logId).filter(Boolean);
+  if (ids.length === 0) {
+    alert('No logs to export');
+    return;
+  }
+
+  exportLogBtn.disabled = true;
+  exportLogBtn.textContent = 'Exporting...';
+  try {
+    const res = await fetch('/api/logs/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids })
+    });
+    const data = await res.json();
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `proxy-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch {
+    alert('Export failed');
+  } finally {
+    exportLogBtn.disabled = false;
+    exportLogBtn.textContent = 'Export';
+  }
 });
 
 // --- Detail Panel ---

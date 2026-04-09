@@ -82,4 +82,13 @@ function clear() {
   } catch { /* ignore */ }
 }
 
-module.exports = { log, saveDetail, getDetail, readLogs, clear, emitter };
+function getLogsWithDetails(ids) {
+  const { logs } = readLogs(100000, 0);
+  const filtered = ids ? logs.filter(l => ids.includes(l.id)) : logs;
+  return filtered.map(entry => ({
+    ...entry,
+    detail: getDetail(entry.id) || null
+  }));
+}
+
+module.exports = { log, saveDetail, getDetail, readLogs, getLogsWithDetails, clear, emitter };

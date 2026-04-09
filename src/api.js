@@ -54,6 +54,19 @@ function handleRequest(req, res) {
     return;
   }
 
+  if (pathname === '/api/logs/export' && req.method === 'POST') {
+    readBody(req, (body) => {
+      try {
+        const { ids } = JSON.parse(body);
+        const result = logger.getLogsWithDetails(ids || null);
+        jsonResponse(res, 200, result);
+      } catch {
+        jsonResponse(res, 400, { error: 'Invalid JSON' });
+      }
+    });
+    return;
+  }
+
   if (pathname === '/api/logs/clear' && req.method === 'POST') {
     logger.clear();
     jsonResponse(res, 200, { ok: true });
