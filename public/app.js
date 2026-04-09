@@ -174,11 +174,12 @@ function renderDetail(detail) {
     return;
   }
 
-  // HTTP request detail
+  // HTTP / HTTPS-monitored request detail
+  const isDecrypted = detail.type === 'https-monitored';
   const req = detail.request;
   html += `
     <div class="detail-section">
-      <h3>Request</h3>
+      <h3>Request${isDecrypted ? ' <span style="color:#00bcd4;font-size:10px">(HTTPS Decrypted)</span>' : ''}</h3>
       <dl class="detail-meta">
         <dt>Method</dt><dd>${escapeHtml(req.method)}</dd>
         <dt>URL</dt><dd>${escapeHtml(req.url)}</dd>

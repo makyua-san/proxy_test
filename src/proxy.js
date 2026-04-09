@@ -1,8 +1,11 @@
 const http = require('http');
+const https = require('https');
 const net = require('net');
+const tls = require('tls');
 const whitelist = require('./whitelist');
 const monitorlist = require('./monitorlist');
 const logger = require('./logger');
+const certs = require('./certs');
 
 const BYPASS_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
@@ -52,6 +55,125 @@ function collectBody(stream, limit, callback) {
   stream.on('error', () => {
     callback('', false, 0);
   });
+}
+
+// --- MITM HTTP server for decrypting monitored HTTPS traffic ---
+const mitmHttpServer = http.createServer((clientReq, clientRes) => {
+  const meta = clientReq.socket._mitmMeta;
+  if (!meta) {
+    clientRes.writeHead(500);
+    clientRes.end('Internal error');
+    return;
+  }
+
+  const { host, port, sourceIp, matchedRule, monitoredRule } = meta;
+  const fullUrl = `https://${host}${clientReq.url}`;
+
+  collectBody(clientReq, REQ_BODY_LIMIT, (reqBody, reqTruncated, reqTotalSize) => {
+    const entry = logger.log({
+      method: clientReq.method,
+      host,
+      port,
+      sourceIp,
+      status: 'allowed',
+      matchedRule,
+      monitored: true,
+      monitoredRule
+    });
+
+    const detail = {
+      id: entry.id,
+      type: 'https-monitored',
+      request: {
+        method: clientReq.method,
+        url: fullUrl,
+        httpVersion: clientReq.httpVersion,
+        headers: clientReq.headers,
+        body: reqBody || null,
+        bodyTruncated: reqTruncated,
+        bodyTotalSize: reqTotalSize
+      },
+      response: null
+    };
+
+    const fwdHeaders = { ...clientReq.headers };
+    delete fwdHeaders['proxy-connection'];
+
+    const proxyReq = https.request({
+      hostname: host,
+      port,
+      path: clientReq.url,
+      method: clientReq.method,
+      headers: fwdHeaders
+    }, (proxyRes) => {
+      const resContentType = proxyRes.headers['content-type'] || '';
+      const captureBody = isTextMime(resContentType);
+
+      if (captureBody) {
+        collectBody(proxyRes, RES_BODY_LIMIT, (resBody, resTruncated, resTotalSize) => {
+          detail.response = {
+            statusCode: proxyRes.statusCode,
+            statusMessage: proxyRes.statusMessage,
+            headers: proxyRes.headers,
+            body: resBody,
+            bodyTruncated: resTruncated,
+            bodyTotalSize: resTotalSize
+          };
+          logger.saveDetail(entry.id, detail);
+
+          clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+          clientRes.end(resBody);
+        });
+      } else {
+        const contentLength = parseInt(proxyRes.headers['content-length'], 10) || 0;
+        detail.response = {
+          statusCode: proxyRes.statusCode,
+          statusMessage: proxyRes.statusMessage,
+          headers: proxyRes.headers,
+          body: `(binary content, ${contentLength} bytes)`,
+          bodyTruncated: false,
+          bodyTotalSize: contentLength
+        };
+        logger.saveDetail(entry.id, detail);
+
+        clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(clientRes, { end: true });
+      }
+    });
+
+    proxyReq.on('error', (err) => {
+      detail.response = { statusCode: 502, statusMessage: err.message, headers: {}, body: null };
+      logger.saveDetail(entry.id, detail);
+      clientRes.writeHead(502, { 'Content-Type': 'text/plain' });
+      clientRes.end(`Proxy error: ${err.message}`);
+    });
+
+    if (reqBody) proxyReq.end(reqBody);
+    else proxyReq.end();
+  });
+});
+mitmHttpServer.timeout = 0;
+
+function handleMitm(clientSocket, head, host, port, sourceIp, matchedRule, monitoredRule) {
+  const hostCert = certs.getHostCert(host);
+
+  if (head && head.length > 0) {
+    clientSocket.unshift(head);
+  }
+
+  const tlsSocket = new tls.TLSSocket(clientSocket, {
+    isServer: true,
+    key: hostCert.key,
+    cert: hostCert.cert,
+    ALPNProtocols: ['http/1.1']
+  });
+
+  tlsSocket.on('error', () => {
+    tlsSocket.destroy();
+  });
+
+  tlsSocket._mitmMeta = { host, port, sourceIp, matchedRule, monitoredRule };
+  mitmHttpServer.emit('connection', tlsSocket);
 }
 
 function createProxyServer() {
@@ -237,7 +359,7 @@ function createProxyServer() {
       monitoredRule
     });
 
-    // Save CONNECT detail (no content visible)
+    // Save CONNECT detail
     logger.saveDetail(entry.id, {
       id: entry.id,
       type: 'connect',
@@ -247,7 +369,9 @@ function createProxyServer() {
         headers: req.headers || {}
       },
       response: null,
-      note: 'HTTPS tunnel - encrypted content not visible'
+      note: monitoredRule
+        ? 'HTTPS tunnel with MITM active - individual requests are logged separately'
+        : 'HTTPS tunnel - encrypted content not visible'
     });
 
     if (!matchedRule) {
@@ -256,7 +380,14 @@ function createProxyServer() {
       return;
     }
 
-    // Establish TCP tunnel to upstream
+    // MITM for monitored domains - decrypt and log individual requests
+    if (monitoredRule) {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      handleMitm(clientSocket, head, host, port, sourceIp, matchedRule, monitoredRule);
+      return;
+    }
+
+    // Establish TCP tunnel to upstream (non-monitored)
     const serverSocket = net.connect(port, host, () => {
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       serverSocket.write(head);
