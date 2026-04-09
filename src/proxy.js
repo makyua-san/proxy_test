@@ -98,6 +98,7 @@ const mitmHttpServer = http.createServer((clientReq, clientRes) => {
 
     const fwdHeaders = { ...clientReq.headers };
     delete fwdHeaders['proxy-connection'];
+    delete fwdHeaders['accept-encoding'];
 
     const proxyReq = https.request({
       hostname: host,
